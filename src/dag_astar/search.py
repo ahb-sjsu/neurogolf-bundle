@@ -112,14 +112,33 @@ def expansions_for_canvas_shape(state: DAGState, grid_h=None, grid_w=None):
             # to trying a few common sizes so search still works without detection.
             yield from expand_flat_with_gather(state, grid_h, grid_w)
             yield from expand_flat_to_canvas(state)
+        elif len(x.shape) == 4 and x.shape[0] == 1 and x.shape[1] == C \
+             and (x.shape[2] < H or x.shape[3] < W):
+            # Sub-canvas: offer Pad to bring back to (1,C,H,W) with zero fill
+            gh, gw = x.shape[2], x.shape[3]
+            pad_h_end = H - gh
+            pad_w_end = W - gw
+            pads = [0, 0, 0, 0, 0, 0, pad_h_end, pad_w_end]
+            yield ("pad", {"pads": pads, "value": 0.0}, [x],
+                   f"pad_to_canvas_from_{gh}x{gw}")
         return
 
-    # Canvas-shaped: offer Conv variants, ReLU, Reshape-to-flat
+    # Canvas-shaped: offer Conv variants, ReLU, Reshape-to-flat, Slice-and-pad
     for k in (1, 3, 5):
         w = (np.random.RandomState(42 + k).randn(C, C, k, k) * 0.1).astype(np.float32)
         yield ("conv", {"weights": w}, [x], f"conv_{k}x{k}")
     yield ("relu", {}, [x], "relu")
     yield from expand_canvas_to_flat(state)
+
+    # Slice + pad patterns: extract a sub-grid at the canvas origin and pad zeros.
+    # Useful when the effective task operates on a small grid embedded in a larger one.
+    # Only emit for grid sizes that a task might plausibly use.
+    if grid_h is not None and grid_w is not None and (grid_h < H or grid_w < W):
+        yield ("slice", {
+            "starts": [0, 0, 0, 0],
+            "ends": [1, C, grid_h, grid_w],
+            "axes": [0, 1, 2, 3],
+        }, [x], f"slice(0,0,{grid_h},{grid_w})")
 
 
 # -----------------------------------------------------------------------
