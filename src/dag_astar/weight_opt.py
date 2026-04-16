@@ -224,25 +224,35 @@ class TorchForward:
         raise ValueError(f"unsupported op {op}")
 
 
-def train_weights(state: DAGState, X: torch.Tensor, Y: torch.Tensor,
-                  device='cpu', steps=500, lr=0.05, margin=0.5):
-    """Train weights in a DAGState to fit X → Y.
+def _train_single(state: DAGState, X: torch.Tensor, Y: torch.Tensor,
+                   device: str, steps: int, lr: float, margin: float,
+                   seed: int, reinit: bool = True):
+    """Single-seed training attempt. Returns (ok, forward) on converge.
 
-    Returns (success, trained_state) where trained_state has updated
-    ONNX initializers with the learned weights.
+    If reinit=False, keeps whatever initial weights the caller set up
+    (useful for the first attempt so A*'s hardcoded init is tried first).
     """
+    import random
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+
     forward = TorchForward(state, device=device)
     params = forward.parameters()
-    if not params:
-        # No learnable parameters; just check if the state already works
+
+    # Re-init learnable params with this seed's draws, if requested
+    if reinit:
         with torch.no_grad():
-            out = forward.forward(X)
-            pred = (out > 0).float()
-            if torch.all(pred == Y).item():
-                return True, state
-        return False, state
+            for p in params:
+                p.copy_(torch.randn_like(p) * 0.1)
+
+    if not params:
+        with torch.no_grad():
+            pred = (forward.forward(X) > 0).float()
+            return torch.all(pred == Y).item(), forward
 
     opt = torch.optim.Adam(params, lr=lr)
+    best_loss = float("inf")
     for step in range(steps):
         opt.zero_grad()
         out = forward.forward(X)
@@ -251,16 +261,48 @@ def train_weights(state: DAGState, X: torch.Tensor, Y: torch.Tensor,
         loss = (pos.sum() + neg.sum()) / (X.numel() + 1e-9)
         loss.backward()
         opt.step()
+        if loss.item() < best_loss:
+            best_loss = loss.item()
         if step % 50 == 49:
             with torch.no_grad():
                 pred = (forward.forward(X) > 0).float()
                 if torch.all(pred == Y).item():
-                    break
+                    return True, forward
 
-    # Check if exact
     with torch.no_grad():
         pred = (forward.forward(X) > 0).float()
-        ok = torch.all(pred == Y).item()
+        return torch.all(pred == Y).item(), forward
+
+
+def train_weights(state: DAGState, X: torch.Tensor, Y: torch.Tensor,
+                  device='cpu', steps=500, lr=0.05, margin=0.5,
+                  num_seeds: int = 1):
+    """Train weights in a DAGState to fit X → Y.
+
+    Tries up to `num_seeds` random initializations; returns on first success.
+    Returns (success, trained_state) where trained_state has updated
+    ONNX initializers with the learned weights.
+    """
+    # Pass-through if no trainable params — verify only.
+    forward0 = TorchForward(state, device=device)
+    if not forward0.parameters():
+        with torch.no_grad():
+            pred = (forward0.forward(X) > 0).float()
+            if torch.all(pred == Y).item():
+                return True, state
+        return False, state
+
+    forward = None
+    ok = False
+    for seed_idx in range(num_seeds):
+        # First attempt: use A*'s hardcoded initial weights (do not reinit).
+        # Subsequent attempts: random new init per seed.
+        ok, forward = _train_single(
+            state, X, Y, device, steps, lr, margin,
+            seed=1000 + seed_idx * 17,
+            reinit=(seed_idx > 0))
+        if ok:
+            break
 
     if not ok:
         return False, state
