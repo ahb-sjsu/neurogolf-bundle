@@ -14,8 +14,15 @@ echo "[bootstrap] clone $REPO_URL@$REPO_REF -> $WORK_DIR"
 git clone --depth 1 --branch "$REPO_REF" "$REPO_URL" "$WORK_DIR"
 
 echo "[bootstrap] pip install deps"
-pip install --quiet --root-user-action=ignore \
-    torch --index-url https://download.pytorch.org/whl/cpu
+# Detect GPU via nvidia-smi; install CUDA torch if present, CPU wheel otherwise.
+if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
+  echo "[bootstrap] GPU detected -> installing torch-cuda"
+  pip install --quiet --root-user-action=ignore torch
+else
+  echo "[bootstrap] no GPU -> installing torch-cpu"
+  pip install --quiet --root-user-action=ignore \
+      torch --index-url https://download.pytorch.org/whl/cpu
+fi
 pip install --quiet --root-user-action=ignore \
     onnx onnxruntime onnx-tool numpy
 

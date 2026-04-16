@@ -62,13 +62,24 @@ def fetch_task(task_num: int, tasks_url: Optional[str] = None) -> Optional[dict]
     return None
 
 
+def _auto_device() -> str:
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda"
+    except Exception:
+        pass
+    return "cpu"
+
+
 def solve_one(task_num: int, task: dict, time_budget_s: float,
               max_expansions: int, max_depth: int) -> dict:
     """Run A* on one task, return a result record."""
     t0 = time.time()
+    device = os.environ.get("NEUROGOLF_DEVICE") or _auto_device()
     try:
         state, info = astar_solve_task(
-            task, task_num, device="cpu",
+            task, task_num, device=device,
             time_budget_s=time_budget_s,
             max_depth=max_depth,
             max_expansions=max_expansions,
