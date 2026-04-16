@@ -16,8 +16,10 @@ git clone --depth 1 --branch "$REPO_REF" "$REPO_URL" "$WORK_DIR"
 echo "[bootstrap] pip install deps"
 # Detect GPU via nvidia-smi; install CUDA torch if present, CPU wheel otherwise.
 if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
-  echo "[bootstrap] GPU detected -> installing torch-cuda"
-  pip install --quiet --root-user-action=ignore torch
+  echo "[bootstrap] GPU detected -> installing torch-cuda (cu118 for broad compat including sm_61)"
+  # CUDA 11.8 wheels support sm_50..sm_90 (1080 Ti, V100, A100, H100)
+  pip install --quiet --root-user-action=ignore \
+      torch==2.4.1 --index-url https://download.pytorch.org/whl/cu118
 else
   echo "[bootstrap] no GPU -> installing torch-cpu"
   pip install --quiet --root-user-action=ignore \
