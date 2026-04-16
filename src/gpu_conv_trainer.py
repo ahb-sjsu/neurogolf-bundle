@@ -244,23 +244,37 @@ def main():
     ap.add_argument("--num-seeds", type=int, default=5)
     ap.add_argument("--max-time-s", type=float, default=180.0)
     ap.add_argument("--device", default=None)
+    ap.add_argument("--emit-stdout-records", action="store_true",
+                     help="Emit JSON-per-line records to stdout (for atlas collector)")
     args = ap.parse_args()
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"device={device}", flush=True)
+    sys.stderr.write(f"device={device}\n")
 
     output_dir = ROOT / args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # For remote NRP runs, tasks live at /data/tasks/. Fall back to ROOT.
+    def _load_task(tn):
+        for cand in (ROOT / f"task{tn:03d}.json",
+                      Path(f"/data/tasks/task{tn:03d}.json"),
+                      Path(f"/data/task{tn:03d}.json")):
+            if cand.exists():
+                with open(cand) as f:
+                    return json.load(f)
+        return None
+
     task_nums = [int(t) for t in args.tasks.split(",") if t.strip()]
     n_solved = 0
     n_err = 0
+    import base64 as _b64
     for tn in task_nums:
-        p = ROOT / f"task{tn:03d}.json"
-        if not p.exists():
+        task = _load_task(tn)
+        if task is None:
+            rec = {"task": tn, "status": "missing"}
+            if args.emit_stdout_records:
+                print(json.dumps(rec), flush=True)
             continue
-        with open(p) as f:
-            task = json.load(f)
         try:
             r = solve_task_gpu(task, tn, device, args.num_seeds, args.max_time_s)
         except Exception as e:
@@ -269,12 +283,33 @@ def main():
         if r.get("status") == "solved":
             onnx.save(r["model"], str(output_dir / f"task{tn:03d}.onnx"))
             n_solved += 1
-            print(f"task{tn:03d}: {r['arch']} cost={r['cost']} "
-                  f"score={r['score']} t={r['elapsed']}s", flush=True)
+            if args.emit_stdout_records:
+                import io as _io
+                buf = _io.BytesIO()
+                onnx.save(r["model"], buf)
+                rec = {
+                    "task": tn, "status": "solved",
+                    "cost": r["cost"], "score": r["score"],
+                    "ops": [r["arch"]],
+                    "elapsed": r["elapsed"],
+                    "expansions": 0,
+                    "model_b64": _b64.b64encode(buf.getvalue()).decode("ascii"),
+                }
+                print(json.dumps(rec), flush=True)
+            else:
+                print(f"task{tn:03d}: {r['arch']} cost={r['cost']} "
+                      f"score={r['score']} t={r['elapsed']}s", flush=True)
         else:
-            print(f"task{tn:03d}: {r['status']} t={r.get('elapsed','?')}s", flush=True)
-    print()
-    print(f"solved={n_solved}/{len(task_nums)} err={n_err}")
+            if args.emit_stdout_records:
+                rec = {"task": tn, "status": r.get("status", "unsolved"),
+                       "elapsed": r.get("elapsed", 0)}
+                print(json.dumps(rec), flush=True)
+            else:
+                print(f"task{tn:03d}: {r['status']} t={r.get('elapsed','?')}s",
+                      flush=True)
+    if not args.emit_stdout_records:
+        print()
+        print(f"solved={n_solved}/{len(task_nums)} err={n_err}")
 
 
 if __name__ == "__main__":

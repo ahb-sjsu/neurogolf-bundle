@@ -33,4 +33,16 @@ echo "[bootstrap] tasks: $(ls /data/tasks | wc -l) files"
 
 echo "[bootstrap] run worker — NEUROGOLF_JOB=$(echo ${NEUROGOLF_JOB:-<none>} | head -c 200)..."
 cd "$WORK_DIR"
-exec python3 src/dag_astar_worker.py
+# Which worker? NEUROGOLF_WORKER=dag_astar (default) or gpu_conv
+WORKER="${NEUROGOLF_WORKER:-dag_astar}"
+if [ "$WORKER" = "gpu_conv" ]; then
+  echo "[bootstrap] running gpu_conv_trainer"
+  exec python3 src/gpu_conv_trainer.py \
+      --tasks "${NEUROGOLF_TASKS}" \
+      --num-seeds "${NEUROGOLF_NUM_SEEDS:-5}" \
+      --max-time-s "${NEUROGOLF_MAX_TIME_S:-180}" \
+      --emit-stdout-records \
+      --output-dir /tmp/out
+else
+  exec python3 src/dag_astar_worker.py
+fi
