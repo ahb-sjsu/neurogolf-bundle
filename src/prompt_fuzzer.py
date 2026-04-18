@@ -427,8 +427,8 @@ def fuzz(task_nums: list[int],
     print(f"\n{'='*70}")
     print(f"FUZZING COMPLETE")
     print(f"{'='*70}")
-    print(f"Total coverage: {len(global_coverage)}/{len(tasks)} tasks "
-          f"({len(global_coverage)/len(tasks):.0%})")
+    pct = f"{len(global_coverage)/len(tasks):.0%}" if tasks else "N/A"
+    print(f"Total coverage: {len(global_coverage)}/{len(tasks)} tasks ({pct})")
     print(f"Corpus size: {len(corpus)} seeds")
     print(f"Tasks solved: {sorted(global_coverage)}")
 
